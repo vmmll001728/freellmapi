@@ -19,6 +19,13 @@ if [[ ! -f "$project_root/package.json" || ! -f "$project_root/package-lock.json
   exit 1
 fi
 
+# Match the PowerShell bootstrap's readable failure when the toolchain is
+# missing: `set -e` alone would exit with a bare shell error.
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "node and npm must be on PATH." >&2
+  exit 1
+fi
+
 node_version="$(node --version | sed 's/^v//')"
 npm_version="$(npm --version)"
 
@@ -60,7 +67,10 @@ cd "$project_root"
 
 if [[ ! -d "$node_modules" || "$installed_lock_hash" != "$lock_hash" ]]; then
   echo 'Installing dependencies...'
-  npm install
+  if ! npm install; then
+    echo "npm install failed; see the output above." >&2
+    exit 1
+  fi
   lock_hash="$(lock_hash_for "$lockfile")"
   printf '%s' "$lock_hash" > "$lock_stamp"
 else
@@ -69,6 +79,11 @@ fi
 
 if [[ ! -e .env ]]; then
   encryption_key="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"
+  # A malformed key would only surface later as an undecryptable database.
+  if [[ ! "$encryption_key" =~ ^[0-9a-f]{64}$ ]]; then
+    echo 'Unable to generate ENCRYPTION_KEY.' >&2
+    exit 1
+  fi
   umask 077
   printf 'ENCRYPTION_KEY=%s\nPORT=3001\n' "$encryption_key" > .env
   echo 'Created .env with a new ENCRYPTION_KEY.'

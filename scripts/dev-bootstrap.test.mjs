@@ -98,3 +98,13 @@ test('Bash bootstrap installs when the lockfile stamp is missing', { skip: proce
     t,
   );
 });
+
+test('Bash bootstrap reports an unusable project root', { skip: process.platform === 'win32' }, async (t) => {
+  const { fixture } = await makeFixture(t);
+  await rm(join(fixture, 'package.json'));
+
+  await assert.rejects(
+    execFile('bash', [join(projectRoot, 'scripts', 'dev-bootstrap.sh'), '--project-root', fixture]),
+    (error) => /Project root must contain package\.json/.test(error.stderr ?? ''),
+  );
+});
