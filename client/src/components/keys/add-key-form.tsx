@@ -63,6 +63,17 @@ export function AddKeyForm({ onSuccess, initialPlatform }: { onSuccess: (offer?:
   const addedPlatforms = useMemo(() => new Set<string>(keys.map(k => k.platform)), [keys])
   const [hideAdded, setHideAdded] = useState(false)
 
+  // #1849: the checklist can preselect a provider that only the SERVER knows
+  // about (signed catalog), so the static PLATFORMS table alone cannot tell
+  // whether it is key-optional. Read the SAME ['keys-providers'] query the
+  // checklist already runs — react-query dedupes it, so this costs no request.
+  const { data: providersData } = useQuery<{
+    providers: Array<{ platform: string; keyless?: boolean }>
+  }>({
+    queryKey: ['keys-providers'],
+    queryFn: () => apiFetch('/api/keys/providers'),
+  })
+
   // #657 post-add scope picker: the platform's model list. This is the same
   // ['fallback'] query the Models page, the fallback chain and the command
   // palette already run — react-query dedupes it, so opening this pane costs at
@@ -150,7 +161,9 @@ export function AddKeyForm({ onSuccess, initialPlatform }: { onSuccess: (offer?:
   const needsProjectId = platform === 'jamai'
   // Key-optional providers (Kilo, OVH, AI Horde) work anonymously, but accept a
   // real key too (#1331): the field stays editable and may be left blank.
-  const isKeyless = [...SEARCH_PROVIDERS, ...PLATFORMS].find(p => p.value === platform)?.keyless ?? false
+  const isKeyless = providersData?.providers?.some(
+    p => p.platform === platform && p.keyless === true)
+    || ([...SEARCH_PROVIDERS, ...PLATFORMS].find(p => p.value === platform)?.keyless ?? false)
   // Cloudflare pairs each token with an account id, and a key-optional
   // provider keeps a single anonymous row, so neither takes a list.
   const canPasteSeveral = !isKeyless && !needsAccountId && !needsProjectId

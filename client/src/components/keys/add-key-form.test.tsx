@@ -81,6 +81,35 @@ it('still requires a key for a provider that needs one', async () => {
   expect(posted()).toBeUndefined()
 })
 
+// #1849: a provider from the signed catalog can be keyless even when it is
+// absent from the client's static PLATFORMS table. The server already says so
+// in GET /api/keys/providers; the form must honour that instead of demanding
+// a key (the server would accept a blank one and store its no-key sentinel).
+it('treats a server-only keyless provider as key-optional (#1849)', async () => {
+  vi.mocked(apiFetch).mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === '/api/keys/providers') {
+      return {
+        providers: [{
+          platform: 'ai-sense', name: 'AI SENSE', keyless: true,
+          configured: false, keyCount: 0, enabledKeyCount: 0,
+        }],
+        summary: { total: 1, configured: 0, unconfigured: 1 },
+      }
+    }
+    return init?.method === 'POST' ? { id: 1 } : []
+  })
+
+  mount(<AddKeyForm onSuccess={onSuccess} initialPlatform={'ai-sense' as Platform} />)
+  // Let the deduped ['keys-providers'] query settle before asserting.
+  for (let i = 0; i < 4; i++) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+  }
+  expect(keyInput().placeholder).toBe('Optional')
+  await submit()
+  expect(posted()).toEqual({ platform: 'ai-sense', key: '' })
+  expect(onSuccess).toHaveBeenCalled()
+})
+
 describe('FreeInference key setup', () => {
   it('offers the provider with its research logging notice and requires a key', async () => {
     mount(<AddKeyForm onSuccess={onSuccess} initialPlatform="freeinference" />)
