@@ -363,7 +363,16 @@ proxyRouter.get(['/models/:id', '/models/*rest'], (req: Request, res: Response) 
     });
     return;
   }
-  const entry = buildCatalogEntries().find(m => m.id === id);
+  const entries = buildCatalogEntries();
+  let entry = entries.find(m => m.id === id);
+  if (!entry && isUnifyEnabled()) {
+    // The listing publishes a canonical slug per group, but chat completions
+    // also accept the literal `models.model_id` a client copies from an
+    // upstream catalog (#242). Resolve it through the same grouping the router
+    // uses, so models.retrieve() agrees with what chat can actually serve.
+    const group = getModelGroups().find(g => g.members.some(m => m.model_id === id));
+    if (group) entry = entries.find(m => m.id === group.canonicalId);
+  }
   if (!entry) {
     res.status(404).json({
       error: { message: `Model not found: ${id}`, type: 'invalid_request_error', code: 'model_not_found', param: 'id' },
@@ -458,6 +467,18 @@ function buildCatalogEntries(filters: { onlyAvailable?: boolean; executionStatus
     ? listed.filter(m => m.executionStatus === filters.executionStatus)
     : listed;
 
+  // The unified listing publishes a canonical slug, while an upstream catalog
+  // (and chat completions) may use the literal `models.model_id` instead
+  // (#242). Publish those literals as additive aliases so a client can
+  // discover both without guessing; entries with no literal keep an empty list.
+  const aliasesByCanonicalId = new Map<string, string[]>();
+  if (isUnifyEnabled()) {
+    for (const g of getModelGroups()) {
+      const ids = [...new Set(g.members.map(m => m.model_id).filter(mid => mid !== g.canonicalId))];
+      if (ids.length) aliasesByCanonicalId.set(g.canonicalId, ids);
+    }
+  }
+
   return [
     {
       id: AUTO_MODEL_ID,
@@ -520,6 +541,8 @@ function buildCatalogEntries(filters: { onlyAvailable?: boolean; executionStatus
       // param is only advertised when every platform the router might pick
       // honors it.
       supported_parameters: supportedParametersForPlatforms(m.platforms, { tools: m.supportsTools }),
+      // Additive: OpenAI clients ignore unknown fields (same as context_length).
+      aliases: aliasesByCanonicalId.get(m.id) ?? [],
     })),
   ];
 }

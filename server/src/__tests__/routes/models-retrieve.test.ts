@@ -96,6 +96,42 @@ describe('GET /v1/models/:id (models.retrieve)', () => {
     expect(got.body.execution_status).toBe(row.execution_status);
   });
 
+  it('resolves a platform-prefixed literal model_id to the listed entry', async () => {
+    const listed = await request(app, 'GET', '/v1/models', undefined, authHeaders());
+    expect(listed.status).toBe(200);
+    const row = listed.body.data.find((m: any) => m.id === 'retrieve-test')
+      ?? listed.body.data.find((m: any) => m.id === 'groq/retrieve-test-model');
+    expect(row).toBeTruthy();
+
+    // Chat completions accept the literal models.model_id (what an upstream
+    // catalog hands out); models.retrieve() must agree with that instead of
+    // answering 404 before an OpenAI-SDK gateway ever gets to route.
+    const got = await request(app, 'GET', '/v1/models/groq/retrieve-test-model', undefined, authHeaders());
+    expect(got.status).toBe(200);
+    expect(got.body).toMatchObject({ object: 'model', id: row.id, owned_by: row.owned_by });
+
+    // The alias fallback must not turn an unknown prefixed id into a hit.
+    const missing = await request(app, 'GET', '/v1/models/groq/not-a-real-model', undefined, authHeaders());
+    expect(missing.status).toBe(404);
+    expect(missing.body.error.code).toBe('model_not_found');
+  });
+
+  it('publishes literal model ids as aliases on both list and retrieve', async () => {
+    const listed = await request(app, 'GET', '/v1/models', undefined, authHeaders());
+    expect(listed.status).toBe(200);
+    const row = listed.body.data.find((m: any) => m.id === 'retrieve-test');
+    expect(row).toBeTruthy();
+    expect(row.aliases).toContain('groq/retrieve-test-model');
+
+    const got = await request(app, 'GET', '/v1/models/retrieve-test', undefined, authHeaders());
+    expect(got.status).toBe(200);
+    expect(got.body.aliases).toEqual(row.aliases);
+
+    // Virtual router entries are not catalog rows and stay unchanged.
+    const auto = await request(app, 'GET', '/v1/models/auto', undefined, authHeaders());
+    expect(auto.body.aliases).toBeUndefined();
+  });
+
   it('resolves the virtual router entries too', async () => {
     const auto = await request(app, 'GET', '/v1/models/auto', undefined, authHeaders());
     expect(auto.status).toBe(200);
