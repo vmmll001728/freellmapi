@@ -778,6 +778,37 @@ describe('runFallbackLoop: a provider-level failure skips the whole platform (#7
   const platformsTried = (dispatch: ReturnType<typeof vi.fn>): string[] =>
     dispatch.mock.calls.map(call => (call[0] as RouteResult).platform);
 
+  it('one AI Horde "not known to this horde" 404 rules out the platform immediately', async () => {
+    const state = newFallbackState();
+    const dispatch = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error(
+        "AI Horde API error 404: The model 'koboldcpp/x' is not known to this horde: "
+        + 'the text model reference does not list it and no online worker serves chat jobs'
+      ), { status: 404 }))
+      .mockResolvedValueOnce('done');
+
+    await runFallbackLoop(hooksSkeleton({ maxRetries: 20, state, route: miniRouter(state), dispatch }));
+
+    // A plain 404 would spend another distinct-model hop before the generic
+    // 3-miss threshold; this horde-level verdict goes straight to beta.
+    expect(platformsTried(dispatch)).toEqual(['alpha', 'beta']);
+    expect(state.skipPlatforms.has('alpha')).toBe(true);
+  });
+
+  it('a plain 404 still needs the generic 3-miss threshold', async () => {
+    const state = newFallbackState();
+    const plain404 = () => Object.assign(new Error('Alpha 404: model not found'), { status: 404 });
+    const dispatch = vi.fn()
+      .mockRejectedValueOnce(plain404())
+      .mockRejectedValueOnce(plain404())
+      .mockResolvedValueOnce('done');
+
+    await runFallbackLoop(hooksSkeleton({ maxRetries: 20, state, route: miniRouter(state), dispatch }));
+
+    expect(platformsTried(dispatch)).toEqual(['alpha', 'alpha', 'beta']);
+    expect(state.skipPlatforms.size).toBe(0);
+  });
+
   it('a 503 on alpha key1 rules out alpha entirely — every key AND every model', async () => {
     const state = newFallbackState();
     const dispatch = vi.fn(async () => {

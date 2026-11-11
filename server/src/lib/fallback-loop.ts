@@ -43,6 +43,7 @@ import {
   isDailyQuotaExhaustedError,
   isPaymentRequiredError,
   isModelNotFoundError,
+  isStaleHordeCatalogError,
   isModelAccessForbiddenError,
   isAccountSuspendedError,
   isProviderBadRequestError,
@@ -494,6 +495,10 @@ export function recordRetryableFailure(route: RouteResult, err: any, state: Fall
     if (seen.size >= MODEL_NOT_FOUND_PLATFORM_LIMIT) {
       state.skipPlatforms.add(route.platform);
     }
+    // AI Horde's "not known to this horde" is a verdict on every sibling row
+    // of the local catalog snapshot, not one stale model: pay ONE hop instead
+    // of three and move straight to the next provider.
+    if (isStaleHordeCatalogError(err)) state.skipPlatforms.add(route.platform);
   }
   // A model-level 404/410 that says the model is GONE (not merely missing right
   // now) outlives this request: persist it once the evidence is strong enough,

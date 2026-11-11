@@ -617,6 +617,18 @@ export function isModelNotFoundError(err: any): boolean {
     || msg.includes('not supported for chat completions');
 }
 
+// AI Horde's OpenAI proxy answers 404 with "The model 'x' is not known to this
+// horde: the text model reference does not list it and no online worker serves
+// chat jobs". That verdict is about the WHOLE horde, not one retired model:
+// every sibling row in a monthly catalog snapshot misses identically. One
+// answer is therefore conclusive for this request; the generic
+// MODEL_NOT_FOUND_PLATFORM_LIMIT stays for ordinary single removals.
+const STALE_HORDE_CATALOG = /\bnot known to this horde\b/;
+
+export function isStaleHordeCatalogError(err: any): boolean {
+  return err?.status === 404 && STALE_HORDE_CATALOG.test((err?.message ?? '').toLowerCase());
+}
+
 
 // A 403 that suspends the ACCOUNT, not one model: NavyAI answers every model
 // behind a benched free key with "The Free plan is temporarily disabled due to
