@@ -69,7 +69,9 @@ export class AIHordeProvider extends BaseProvider {
    * row (so routing treats the platform as configured) and we send the anon
    * bearer. A stored real horde key replaces the sentinel for higher priority. */
   keyless = true;
-  private readonly baseUrl = 'https://oai.aihorde.net/v1';
+  // Overridable for local black-box testing against a mock horde endpoint.
+  // Falls back to the public proxy when unset (#D5 / issue #345).
+  private readonly baseUrl = process.env.AIHORDE_BASE_URL ?? 'https://oai.aihorde.net/v1';
 
   /** Map the stored credential to the bearer we send upstream. The keyless flow
    * stores `'no-key'` (or nothing) for the anonymous case → send AI Horde's
