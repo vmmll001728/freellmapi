@@ -88,6 +88,22 @@ try {
             'PORT=3001'
         ) | Set-Content -LiteralPath $envFile -Encoding ascii
         Write-Host 'Created .env with a new ENCRYPTION_KEY.'
+
+        # Mirror the .sh bootstrap's `umask 077`: the .env holds the ENCRYPTION_KEY
+        # secret, so restrict it to this user, SYSTEM and Administrators. NTFS default
+        # ACL would otherwise let any local user read it. SIDs are used (not account
+        # names) so this works on non-English locales too.
+        try {
+            $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            & icacls $envFile /inheritance:r /grant:r "*${currentSid}:(R,W)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)'
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host 'Restricted .env ACL to owner/SYSTEM/Administrators (mirrors umask 077).'
+            } else {
+                Write-Warning "icacls exited with $LASTEXITCODE; .env may still be world-readable. Verify its ACL."
+            }
+        } catch {
+            Write-Warning "Could not restrict .env ACL via icacls: $_"
+        }
     } else {
         Write-Host '.env already exists; leaving it unchanged.'
     }
