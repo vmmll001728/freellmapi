@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { execFile as execFileCallback } from 'node:child_process';
+import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,6 +10,10 @@ import assert from 'node:assert/strict';
 const execFile = promisify(execFileCallback);
 const projectRoot = resolve(import.meta.dirname, '..');
 const powershell = process.platform === 'win32' ? 'powershell.exe' : null;
+// Windows installs with Git Bash on PATH can run the Bash bootstrap too. Skip
+// on actual capability, not on platform: a hard win32 skip left these cases
+// permanently uncovered on the very hosts that ship both bootstrap scripts.
+const bash = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 ? 'bash' : null;
 
 // Windows PowerShell 5.1 launched from a PowerShell 7 shell inherits PS7's
 // PSModulePath and then cannot load its own built-in modules (#1392). Drop the
@@ -73,7 +77,7 @@ test('PowerShell bootstrap creates and preserves .env', { skip: powershell === n
   );
 });
 
-test('Bash bootstrap creates and preserves .env', { skip: process.platform === 'win32' }, async (t) => {
+test('Bash bootstrap creates and preserves .env', { skip: bash === null }, async (t) => {
   await assertEnvIsCreatedAndPreserved(
     (fixture) => execFile('bash', [join(projectRoot, 'scripts', 'dev-bootstrap.sh'), '--project-root', fixture]),
     t,
@@ -92,14 +96,14 @@ test('PowerShell bootstrap installs when the lockfile stamp is missing', { skip:
   );
 });
 
-test('Bash bootstrap installs when the lockfile stamp is missing', { skip: process.platform === 'win32' }, async (t) => {
+test('Bash bootstrap installs when the lockfile stamp is missing', { skip: bash === null }, async (t) => {
   await assertMissingStampInstalls(
     (fixture) => execFile('bash', [join(projectRoot, 'scripts', 'dev-bootstrap.sh'), '--project-root', fixture]),
     t,
   );
 });
 
-test('Bash bootstrap reports an unusable project root', { skip: process.platform === 'win32' }, async (t) => {
+test('Bash bootstrap reports an unusable project root', { skip: bash === null }, async (t) => {
   const { fixture } = await makeFixture(t);
   await rm(join(fixture, 'package.json'));
 
