@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AIHordeProvider } from '../../providers/aihorde.js';
+import { isStaleHordeCatalogError } from '../../lib/error-classify.js';
 
 // AI Horde's OpenAI proxy diverges from the OpenAI contract; these tests pin the
 // AIHordeProvider normalizations that keep it from 422-ing or recording zero
@@ -35,6 +36,33 @@ describe('AIHordeProvider', () => {
     });
     return captured;
   }
+
+  it('a real upstream 404 keeps the status and horde wording for the platform skip', async () => {
+    // A stale catalog row comes back as {"detail": ...} with a 404. The
+    // adapter must preserve BOTH the structured status and the wording:
+    // fallback-loop's single-hop platform skip keys off exactly these two.
+    // This drives a real adapter error rather than a hand-built Error object.
+    vi.spyOn(global, 'fetch').mockImplementationOnce(async () => ({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      json: () => Promise.resolve({
+        detail: "The model 'koboldcpp/x' is not known to this horde: the text model reference does not list it and no online worker serves chat jobs",
+      }),
+      headers: { get: () => null },
+    } as any));
+
+    let thrown: any;
+    try {
+      await provider.chatCompletion('no-key', [{ role: 'user', content: 'hi' }], 'koboldcpp/x');
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeTruthy();
+    expect(thrown.status).toBe(404);
+    expect(String(thrown.message)).toContain('not known to this horde');
+    expect(isStaleHordeCatalogError(thrown)).toBe(true);
+  });
 
   it('has correct platform/name and is keyless', () => {
     expect(provider.platform).toBe('aihorde');
