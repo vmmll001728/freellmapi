@@ -258,6 +258,36 @@ export function newFallbackState(): FallbackState {
   return { skipKeys: new Set<string>(), skipModels: new Set<number>(), skipPlatforms: new Set<string>(), modelNotFoundPlatforms: new Map() };
 }
 
+// --- Cross-request platform skip cache (#D3) ---
+// A platform ruled out wholesale within one request (stale catalog 404,
+// provider-level 5xx/timeout, or 3 distinct model_not_found) is remembered
+// briefly so the NEXT request's router seeds skipPlatforms from it instead of
+// re-paying the same dead-hop round trip. Entries are timestamped and
+// lazy-expired; a successful attempt through the platform clears its entry so a
+// recovered provider is usable again immediately. Deliberately conservative: a
+// short TTL plus success-clearing keep a merely-flaky provider from being
+// blacklisted for long.
+//
+// The cache itself lives in platform-skip-store.ts (a DB-free module) so a
+// vitest setupFile can reset it between tests without importing the database
+// into the setup graph. Re-export the public surface so existing importers of
+// fallback-loop are unaffected.
+import {
+  CROSS_REQUEST_PLATFORM_SKIP_MS,
+  recordPlatformSkip,
+  collectPlatformSkips,
+  clearPlatformSkip,
+  resetPlatformSkips,
+} from './platform-skip-store.js';
+
+export {
+  CROSS_REQUEST_PLATFORM_SKIP_MS,
+  recordPlatformSkip,
+  collectPlatformSkips,
+  clearPlatformSkip,
+  resetPlatformSkips,
+};
+
 // DISTINCT model_not_found hops on one platform, within one request, before the
 // whole platform is ruled out: a healthy catalog never misses three different
 // models in a single failover chain — a stale/broken one does it routinely
@@ -494,11 +524,15 @@ export function recordRetryableFailure(route: RouteResult, err: any, state: Fall
     state.modelNotFoundPlatforms.set(route.platform, seen);
     if (seen.size >= MODEL_NOT_FOUND_PLATFORM_LIMIT) {
       state.skipPlatforms.add(route.platform);
+      recordPlatformSkip(route.platform, now);
     }
     // AI Horde's "not known to this horde" is a verdict on every sibling row
     // of the local catalog snapshot, not one stale model: pay ONE hop instead
     // of three and move straight to the next provider.
-    if (isStaleHordeCatalogError(err)) state.skipPlatforms.add(route.platform);
+    if (isStaleHordeCatalogError(err)) {
+      state.skipPlatforms.add(route.platform);
+      recordPlatformSkip(route.platform, now);
+    }
   }
   // A model-level 404/410 that says the model is GONE (not merely missing right
   // now) outlives this request: persist it once the evidence is strong enough,
@@ -534,6 +568,7 @@ export function recordRetryableFailure(route: RouteResult, err: any, state: Fall
   // that outlives the request.
   if (isProviderLevelError(err)) {
     state.skipPlatforms.add(route.platform);
+    recordPlatformSkip(route.platform, now);
   }
   // Too big for this model is a fact about the REQUEST, not the model's
   // health: it still serves every smaller request. Skip it for this request
@@ -1442,6 +1477,11 @@ async function runFallbackLoopAttempts(hooks: FallbackHooks, trace: RequestTrace
   };
   let lastError: any = null;
 
+  // D3: seed cross-request platform skips observed in prior requests so the
+  // router avoids a provider already known-broken without re-paying the
+  // dead-hop cost this request would otherwise incur first.
+  for (const p of collectPlatformSkips()) hooks.state.skipPlatforms.add(p);
+
   // Circuit-breaker guardrail (default off): the Nth consecutive upstream
   // failure aborts the chain with a 503 instead of grinding the remaining
   // candidates of a pool that is failing across the board. Auth failures count
@@ -1707,6 +1747,9 @@ async function runFallbackLoopAttempts(hooks: FallbackHooks, trace: RequestTrace
     // stream had already flushed bytes when the attempt ended (mid-stream
     // error or pre-commit disconnect) — the parent row carries the specifics.
     traceAttempt(outcome === 'done' ? 'ok' : 'committed');
+    // D3: a successful attempt through a platform proves it is healthy again, so
+    // drop any cross-request skip we may have accumulated for it.
+    clearPlatformSkip(route.platform);
     return;
     } finally {
       if (hedgeTimer) clearTimeout(hedgeTimer);

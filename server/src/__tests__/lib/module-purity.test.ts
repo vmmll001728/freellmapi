@@ -34,6 +34,8 @@ const PURE_MODULES = [
   'budget.ts',
   // Shared by the provider, media and embeddings request paths (#1331).
   'credential.ts',
+  // Cross-request platform-skip cache (D3): a Map + helpers, no imports.
+  'platform-skip-store.ts',
   'error-classify.ts',
   // Signal handling for the container's PID 1; the server, DB and process are injected.
   'graceful-shutdown.ts',
