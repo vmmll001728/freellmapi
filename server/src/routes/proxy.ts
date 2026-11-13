@@ -2926,7 +2926,21 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           }
 
           const hasText = mode === 'passthrough' || heldText.trim().length > 0;
-          if (!hasText && completedCalls.length === 0) {
+          // A reasoning-only turn is still an answer. A thinking model asked
+          // for a small max_tokens — a client's "test connection" probe sends
+          // max_tokens=4 — spends the whole budget on reasoning and never
+          // reaches visible text, so the stream ends carrying nothing but
+          // reasoning_content deltas. The non-stream path folds that reasoning
+          // into content (normalizeChoices) so OpenAI-compatible clients see a
+          // non-empty message; mirror it here instead of failing the turn out
+          // with an empty_completion error the client reads as a refusal.
+          // Plain text turns only: 'json' (response_format) and 'dialect'
+          // (inline tool-call syntax) keep their own failure semantics.
+          if (!hasText && completedCalls.length === 0 && mode === 'undecided'
+              && !samplingParams.response_format && streamReasoning.trim().length > 0) {
+            heldText = streamReasoning;
+          }
+          if (!hasText && completedCalls.length === 0 && heldText.trim().length === 0) {
             // Nothing usable came out — same failover semantics as the
             // non-stream empty-completion path. Headers are only sent here after a
             // #1642 long-reasoning commit, where the catch emits stream_error;

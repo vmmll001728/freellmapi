@@ -229,12 +229,20 @@ describe('long reasoning commits and keeps the stream alive (#1642)', () => {
     expect(thought).toBeLessThan(raw.indexOf('the answer'));
   });
 
-  it('/v1/chat/completions: a committed reasoning-only stream ends with stream_error', async () => {
+  it('/v1/chat/completions: a committed reasoning-only stream folds the thinking into content', async () => {
+    // #1731: once the stream is committed it can no longer fail over, and
+    // the OpenAI-compatible shape has no place for a thinking-only answer —
+    // a client that only reads `content` saw an empty body and called it a
+    // refusal. The thinking is folded into content instead, the same way the
+    // non-stream path already does (normalizeChoices). The Anthropic surface
+    // keeps its own contract above: there, a thinking block IS the answer
+    // shape, so a reasoning-only turn stays an error event.
     streamChatCompletion.mockImplementation(() => longReasoning(null));
     const { status, raw } = await post(app(), req, '/v1/chat/completions', auth());
     expect(status).toBe(200);
     expect(streamChatCompletion).toHaveBeenCalledTimes(1);
-    expect(raw).toContain('stream_error');
+    expect(raw).toContain('"content":"deep thought still thinking"');
+    expect(raw).not.toContain('stream_error');
     expect(raw).toContain('data: [DONE]');
   });
 
